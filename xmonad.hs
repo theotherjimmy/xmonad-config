@@ -24,9 +24,10 @@ gsConfigWin = defaultGSConfig
 gsConfigLay :: GSConfig [Char]
 gsConfigLay = defaultGSConfig
 
-layouts = ["Tall", "Mirror Tall", "Full", "Grid", "3 by 2", "Three Column"]
+layouts = ["Tall", "Wide", "Full", "Grid", "3 by 2", "Three Column"]
 
-myLayouts = noBorders Full ||| tiled ||| Mirror tiled ||| Grid
+myLayouts = noBorders Full ||| tiled ||| (renamed [Replace "Wide"] $ Mirror tiled)
+            ||| Grid
             ||| (renamed [Replace "3 by 2"] $ GridRatio (3/2))
             ||| (renamed [Replace "Three Column"] $ ThreeCol 1 (3/100) (1/3))
   where

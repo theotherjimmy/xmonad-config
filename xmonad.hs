@@ -9,6 +9,7 @@ import XMonad.Actions.DynamicWorkspaces
 import XMonad.Actions.GridSelect
 import XMonad.Hooks.DynamicLog
 import XMonad.Hooks.ManageHelpers
+import XMonad.Hooks.EwmhDesktops
 import XMonad.Layout.Grid
 import XMonad.Layout.NoBorders
 import XMonad.Layout.Renamed
@@ -121,12 +122,13 @@ main = (=<<) xmonad $ statusBar "xmobar" xmobarConfig toggleBarKey
        $ withNavigation2DConfig (defaultNavigation2DConfig { layoutNavigation = [("Full", centerNavigation)]
                                                            , unmappedWindowRect = [("Full", singleWindowRect)]
                                                            })
+       $ ewmh
        $ defaultConfig { keys = mykeys
                        , terminal = "urxvtc"
                        , borderWidth = 1
                        , focusFollowsMouse = False
                        , layoutHook = myLayouts
                        , XMonad.workspaces = ["Default"]
-                       , manageHook = (isFullscreen --> doFullFloat)
-                                      <+> manageHook defaultConfig
+                       , handleEventHook = handleEventHook defaultConfig
+                                           <+> fullscreenEventHook
                        }

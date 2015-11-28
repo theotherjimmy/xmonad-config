@@ -85,26 +85,23 @@ remote :: Parser Remote
 remote =  Remote <$> many (noneOf ":#")
           <*> choice [ char '#' >> Just <$> some numberChar, pure Nothing ]
 
+showSSHremotes :: [Remote] -> String -> String
+showSSHremotes [] suffix = suffix
+showSSHremotes ((Remote host Nothing):rs) suffix =
+  "ssh -A -t " ++ host ++ " " ++ showSSHremotes rs suffix
+showSSHremotes ((Remote host (Just port)):rs) suffix=
+  "ssh -A -t " ++ host ++ " -p " ++ port ++ " " ++ showSSHremotes rs suffix
 
--- needs to be in quotes, escaped
-showSSHremotes :: [Remote] -> String
-showSSHremotes [] = ""
-showSSHremotes ((Remote host Nothing):rs) = "ssh " ++ host ++ " "
-                                            ++ showSSHremotes rs
-showSSHremotes ((Remote host (Just port)):rs) = "ssh " ++ host
-                                                ++ " -p " ++ port ++ " "
-                                                ++ showSSHremotes rs
-
--- needs to be in quotes, escaped
-showtermSsh :: String -> DirSpec -> String
+howtermSsh :: String -> DirSpec -> String
 showtermSsh termCommand (DirSpec [] _) = termCommand
 showtermSsh termCommand (DirSpec remotes "") =
-  termCommand ++" -e  bash -c \'" ++ showSSHremotes remotes ++ "\'"
+  termCommand ++" -e  bash -c \"" ++ showSSHremotes remotes ""  ++ "\""
 showtermSsh termCommand (DirSpec remotes dir) =
-  termCommand ++" -e bash -c \'" ++ showSSHremotes remotes
-  ++ " -t mkdir -p " ++ dir
-  ++ "; cd " ++ dir
-  ++ "; bash --login \'"
+  termCommand ++" -e bash -c \""
+  ++ showSSHremotes remotes ("\'mkdir -p " ++ dir
+                             ++ "; cd " ++ dir
+                             ++ "; bash --login\'")
+  ++ "\""
 
 showEmacsRemotes :: [Remote] -> String
 showEmacsRemotes [] = ""
@@ -174,7 +171,7 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
          , ((0, xK_e), remEmacs "emacsclient -c")
          , ((modm, xK_e), spawn "emacsclient -c")
          , ((0, xK_p), spawn "dmenu_run")
-         , ((0, xK_a), flashText def 1 "boo")
+         , ((0, xK_a), remTerm "boo")
          , ((modm, xK_q), spawn $ "ghc -e ':m +XMonad Control.Monad System.Exit'"
                           ++ " -e 'flip unless exitFailure =<< recompile False'"
                           ++ " && xmonad --restart")

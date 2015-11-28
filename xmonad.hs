@@ -1,8 +1,14 @@
-import qualified Data.Map as M
+{-# LANGUAGE DeriveDataTypeable #-}
+import Control.Monad (unless)
+import qualified Data.Map.Strict as M
 import Data.List (sort)
+import Data.Monoid ((<>))
+import System.Directory (setCurrentDirectory, getHomeDirectory)
+import System.FilePath ((</>))
 import XMonad hiding ((|||))
 import XMonad.StackSet as W
 import XMonad.Actions.Navigation2D
+import XMonad.Actions.ShowText
 import XMonad.Actions.Submap
 import XMonad.Actions.DynamicWorkspaces
 import XMonad.Actions.GridSelect
@@ -13,23 +19,72 @@ import XMonad.Layout.NoBorders
 import XMonad.Layout.Renamed
 import XMonad.Layout.ThreeColumns
 import XMonad.Layout.LayoutCombinators ((|||),JumpToLayout(..))
+import XMonad.Prompt
+import XMonad.Prompt.Directory (directoryPrompt)
 import XMonad.Util.Loggers
+import qualified XMonad.Util.ExtensibleState as XS
 import Text.Megaparsec hiding (hidden)
 import Text.Megaparsec.String
 
 data Remote = Remote String (Maybe String) deriving (Read, Show)
 data DirSpec = DirSpec [Remote] String deriving (Read, Show)
+data Projects = Projects
+                { projects :: !(M.Map String DirSpec)
+                , previousProject :: !(Maybe WorkspaceId)
+                } deriving (Typeable, Read, Show)
+instance ExtensionClass Projects where
+  initialValue = Projects M.empty Nothing
+
+dynamicProjects :: XConfig a -> XConfig a
+dynamicProjects c = c {logHook = logHook c <> dynamicProjectsLogHook}
+
+dynamicProjectsLogHook :: X ()
+dynamicProjectsLogHook = do
+  name <- gets (W.tag . W.workspace . W.current . windowset)
+  state <- XS.get
+  unless (Just name == previousProject state) $ do
+    XS.modify $ \s -> s {previousProject = Just name}
+    activateProject $ M.lookup name $ projects state
+
+activateProject :: Maybe DirSpec -> X ()
+activateProject p = do
+  home <- io getHomeDirectory
+  catchIO (setCurrentDirectory $ showPWD p home)
+
+showPWD :: Maybe DirSpec -> FilePath -> FilePath
+showPWD (Nothing) home = home
+showPWD (Just (DirSpec [] dir)) home = home </> dir
+showPWD (Just (DirSpec (_:_) _)) home = home
+
+currentProject :: X (Maybe DirSpec)
+currentProject = gets (W.tag . W.workspace . W.current . windowset)
+                 >>= lookupProject
+  where
+    lookupProject :: String -> X (Maybe DirSpec)
+    lookupProject name = M.lookup name <$> XS.gets projects
+
+setCurrentProject :: XPConfig -> X ()
+setCurrentProject c = do
+  name <- gets (W.tag . W.workspace . W.current . windowset)
+  directoryPrompt c "Set DirSpec: " $ update name . parseDirSpec
+  where
+    update :: String -> Either ParseError DirSpec -> X ()
+    update name (Right ds) = do
+      XS.modify $ \s -> s {projects = M.insert name ds $ projects s}
+      activateProject $ Just ds
+    update name (Left err) = flashText def 4 $ show err
 
 parseDirSpec :: String -> Either ParseError DirSpec
 parseDirSpec input = parse dirSpec "(XMonad input)" input
 
 dirSpec :: Parser DirSpec
-dirSpec = space >> many (noneOf " ") >> space >> DirSpec
+dirSpec = space >> DirSpec
           <$> many (try $ remote <* (char ':')) <*> many (noneOf " ")
 
 remote :: Parser Remote
 remote =  Remote <$> many (noneOf ":#")
           <*> choice [ char '#' >> Just <$> some numberChar, pure Nothing ]
+
 
 -- needs to be in quotes, escaped
 showSSHremotes :: [Remote] -> String
@@ -42,11 +97,7 @@ showSSHremotes ((Remote host (Just port)):rs) = "ssh " ++ host
 
 -- needs to be in quotes, escaped
 showtermSsh :: String -> DirSpec -> String
-showtermSsh termCommand (DirSpec [] "") = termCommand
-showtermSsh termCommand (DirSpec [] dir) =
-  termCommand ++ " -e bash -c \'mkdir -p " ++ dir
-  ++ "; cd " ++ dir
-  ++ "; zsh --login \'"
+showtermSsh termCommand (DirSpec [] _) = termCommand
 showtermSsh termCommand (DirSpec remotes "") =
   termCommand ++" -e  bash -c \'" ++ showSSHremotes remotes ++ "\'"
 showtermSsh termCommand (DirSpec remotes dir) =
@@ -70,9 +121,9 @@ showEmacsSsh emacsCmd (DirSpec remotes dir) =
 
 remThing ::  (String -> DirSpec -> String) -> String -> X ()
 remThing showfn termCommand =
-  gets windowset >>= term' . parseDirSpec . tag . workspace . current
-  where term' (Right ds) = spawn $ showfn termCommand ds
-        term' (Left  _ ) = spawn termCommand
+  currentProject >>= term'
+  where term' (Just ds) = spawn $ showfn termCommand ds
+        term' (Nothing) = spawn termCommand
 
 remTerm :: String -> X ()
 remTerm = remThing showtermSsh
@@ -123,6 +174,7 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
          , ((0, xK_e), remEmacs "emacsclient -c")
          , ((modm, xK_e), spawn "emacsclient -c")
          , ((0, xK_p), spawn "dmenu_run")
+         , ((0, xK_a), flashText def 1 "boo")
          , ((modm, xK_q), spawn $ "ghc -e ':m +XMonad Control.Monad System.Exit'"
                           ++ " -e 'flip unless exitFailure =<< recompile False'"
                           ++ " && xmonad --restart")
@@ -136,9 +188,10 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
          , ((modm .|. shiftMask, xK_g), myGridselectWorkspace gsConfigWS
                                         (\ws -> W.greedyView ws . W.shift ws))
          , ((0, xK_g), submap . M.fromList $
-           [ ((0, xK_k), removeWorkspace)
+           [ ((0, xK_d), removeWorkspace)
            , ((0, xK_c), addWorkspacePrompt def)
            , ((0, xK_r), renameWorkspace def)
+           , ((0, xK_e), setCurrentProject def) 
            , ((0, xK_n), myGridselectWorkspace gsConfigWS W.greedyView)
            , ((shiftMask, xK_n), myGridselectWorkspace gsConfigWS
                                  (\ws -> W.greedyView ws . W.shift ws))
@@ -155,18 +208,20 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
            ])
            --monitor map
          , ((0, xK_m), submap . M.fromList $
-           [ ((0, xK_e), spawn "xrandr --output VGA1 --auto --left-of LVDS1"
+           [ ((0, xK_l), spawn "xrandr --output VGA1 --auto --right-of LVDS1"
+             >> rescreen)
+           , ((0, xK_h), spawn "xrandr --output VGA1 --auto --left-of LVDS1"
+             >> rescreen)
+           , ((0, xK_k), spawn "xrandr --output VGA1 --auto --above LVDS1"
+             >> rescreen)
+           , ((0, xK_j), spawn "xrandr --output VGA1 --off"
              >> rescreen)
            , ((0, xK_d), spawn "xrandr --output VGA1 --off"
              >> rescreen)
-           , ((0, xK_l), screenGo R False)
-           , ((0, xK_h), screenGo L False)
-           , ((0, xK_j), screenGo D False)
-           , ((0, xK_k), screenGo U False)
-           , ((shiftMask, xK_l), screenSwap R False)
-           , ((shiftMask, xK_h), screenSwap L False)
-           , ((shiftMask, xK_j), screenSwap D False)
-           , ((shiftMask, xK_k), screenSwap U False)
+           , ((shiftMask, xK_l), screenGo R False)
+           , ((shiftMask, xK_h), screenGo L False)
+           , ((shiftMask, xK_j), screenGo D False)
+           , ((shiftMask, xK_k), screenGo U False)
            ])
          , ((0, xK_k), kill)
          ])
@@ -184,7 +239,7 @@ batteryCmd = logCmd $ "/usr/bin/acpi | "
              ++" s/[cC]harged, /Charged/'"
 
 xmobarConfig :: PP
-xmobarConfig = xmobarPP {ppSep = " | "
+xmobarConfig = xmobarPP { ppSep = " | "
                         , ppOrder = \(ws:lay:t:bat:_) -> [ws,lay,bat,t]
                         , ppExtras = [batteryCmd]
                         }
@@ -194,12 +249,12 @@ main = (=<<) xmonad $ statusBar "xmobar" xmobarConfig toggleBarKey
        $ withNavigation2DConfig ( def { layoutNavigation = [("Full", centerNavigation)]
                                       , unmappedWindowRect = [("Full", singleWindowRect)]
                                       })
-       $ ewmh
+       $ ewmh $ dynamicProjects
        $ def { keys = mykeys
              , terminal = "urxvtc"
              , borderWidth = 1
              , focusFollowsMouse = False
              , layoutHook = myLayouts
              , XMonad.workspaces = ["Default"]
-             , handleEventHook = handleEventHook def <+> fullscreenEventHook
+             , handleEventHook = handleEventHook def <+> fullscreenEventHook <+> handleTimerEvent
              }

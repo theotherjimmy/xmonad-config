@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 import Control.Monad (unless)
 import qualified Data.Map.Strict as M
-import Data.List (sort)
+import Data.List (sort,nub)
 import Data.Monoid ((<>))
 import System.Directory (setCurrentDirectory, getHomeDirectory)
 import System.FilePath ((</>))
@@ -22,6 +22,7 @@ import XMonad.Layout.LayoutCombinators ((|||),JumpToLayout(..))
 import XMonad.Prompt
 import XMonad.Prompt.Directory (directoryPrompt)
 import XMonad.Util.Loggers
+import XMonad.Util.NamedWindows (getName)
 import qualified XMonad.Util.ExtensibleState as XS
 import Text.Megaparsec hiding (hidden)
 import Text.Megaparsec.String
@@ -92,7 +93,7 @@ showSSHremotes ((Remote host Nothing):rs) suffix =
 showSSHremotes ((Remote host (Just port)):rs) suffix=
   "ssh -A -t " ++ host ++ " -p " ++ port ++ " " ++ showSSHremotes rs suffix
 
-howtermSsh :: String -> DirSpec -> String
+showtermSsh :: String -> DirSpec -> String
 showtermSsh termCommand (DirSpec [] _) = termCommand
 showtermSsh termCommand (DirSpec remotes "") =
   termCommand ++" -e  bash -c \"" ++ showSSHremotes remotes ""  ++ "\""
@@ -111,8 +112,7 @@ showEmacsRemotes ((Remote host (Just port)):rs) =
   "ssh:" ++ host ++ "#" ++ port ++ ":" ++ showEmacsRemotes rs
 
 showEmacsSsh :: String -> DirSpec -> String
-showEmacsSsh emacsCmd (DirSpec [] "") = emacsCmd
-showEmacsSsh emacsCmd (DirSpec [] dir) = emacsCmd ++ " " ++ dir
+showEmacsSsh emacsCmd (DirSpec [] _) = emacsCmd ++ " ."
 showEmacsSsh emacsCmd (DirSpec remotes dir) =
   emacsCmd ++ " /" ++ showEmacsRemotes remotes ++ dir
 
@@ -154,6 +154,13 @@ myGridselectWorkspace conf viewFn = withWindowSet $ \ws -> do
   let wss = sort $ map W.tag $ W.hidden ws ++ map W.workspace (W.current ws : W.visible ws)
   gridselect conf (zip wss wss) >>= flip whenJust (windows . viewFn)
 
+myGridselectWindows :: GSConfig Window -> X ()
+myGridselectWindows config = gets workspaceWindows >>= mapM keyValuePair
+                             >>= gridselect config >>= maybe (pure ()) (windows . W.focusWindow)
+  where decorateName' w = show <$> getName w
+        keyValuePair w = flip (,) w <$> decorateName' w
+        workspaceWindows = nub . W.integrate' . W.stack . W.workspace . W.current . windowset
+
 mykeys :: XConfig t -> M.Map (KeyMask, KeySym) (X ())
 mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
        [ ((modm, xK_l), windowGo R False)
@@ -177,7 +184,7 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
                           ++ " && xmonad --restart")
          , ((modm, xK_s), spawn "i3lock -e -t -i bsod.png")
          , ((0, xK_n), goToSelected gsConfigWin)
-         , ((modm, xK_n), goToSelected gsConfigWin)
+         , ((modm, xK_n), myGridselectWindows gsConfigWin)
          , ((modm .|. shiftMask, xK_s), spawn $ "i3lock -e -t -i bsod.png"
                                         ++ " && sudo systemctl suspend")
            -- group map

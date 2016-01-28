@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 import Control.Monad (unless)
 import qualified Data.Map.Strict as M
-import Data.List (sort,nub)
+import Data.List (sort,nub,intercalate)
 import Data.Monoid ((<>))
 import System.Directory (setCurrentDirectory, getHomeDirectory)
 import System.FilePath ((</>))
@@ -105,16 +105,15 @@ showtermSsh termCommand (DirSpec remotes dir) =
   ++ "\""
 
 showEmacsRemotes :: [Remote] -> String
-showEmacsRemotes [] = ""
-showEmacsRemotes ((Remote host Nothing):rs) =
-  "ssh:" ++ host ++ ":" ++ showEmacsRemotes rs
-showEmacsRemotes ((Remote host (Just port)):rs) =
-  "ssh:" ++ host ++ "#" ++ port ++ ":" ++ showEmacsRemotes rs
+showEmacsRemotes rs = intercalate "|" $ map showEmacsRemote rs
+  where showEmacsRemote (Remote host Nothing) = "ssh:" ++ host
+        showEmacsRemote (Remote host (Just port)) =
+          "ssh:" ++ host ++ "#" ++ port
 
 showEmacsSsh :: String -> DirSpec -> String
 showEmacsSsh emacsCmd (DirSpec [] _) = emacsCmd ++ " ."
 showEmacsSsh emacsCmd (DirSpec remotes dir) =
-  emacsCmd ++ " /" ++ showEmacsRemotes remotes ++ dir
+  emacsCmd ++ " \"/" ++ showEmacsRemotes remotes ++ ":" ++ dir ++ "\""
 
 remThing ::  (String -> DirSpec -> String) -> String -> X ()
 remThing showfn termCommand =

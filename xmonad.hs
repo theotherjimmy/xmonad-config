@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 import Control.Monad (unless)
+import Control.Applicative
 import qualified Data.Map.Strict as M
 import Data.List (sort,nub,intercalate)
 import Data.Monoid ((<>))
@@ -26,6 +27,7 @@ import XMonad.Util.NamedWindows (getName)
 import qualified XMonad.Util.ExtensibleState as XS
 import Text.Megaparsec hiding (hidden)
 import Text.Megaparsec.String
+import Text.Megaparsec.Error (Dec)
 
 data Remote = Remote String (Maybe String) deriving (Read, Show)
 data DirSpec = DirSpec [Remote] String deriving (Read, Show)
@@ -69,13 +71,13 @@ setCurrentProject c = do
   name <- gets (W.tag . W.workspace . W.current . windowset)
   directoryPrompt c "Set DirSpec: " $ update name . parseDirSpec
   where
-    update :: String -> Either ParseError DirSpec -> X ()
+    update :: String -> Either (ParseError (Token String) Dec) DirSpec -> X ()
     update name (Right ds) = do
       XS.modify $ \s -> s {projects = M.insert name ds $ projects s}
       activateProject $ Just ds
-    update name (Left err) = flashText def 4 $ show err
+    update name (Left err) = flashText defaultSTConfig 4 "Bad dirspec"
 
-parseDirSpec :: String -> Either ParseError DirSpec
+parseDirSpec :: String -> Either (ParseError (Token String) Dec) DirSpec
 parseDirSpec input = parse dirSpec "(XMonad input)" input
 
 dirSpec :: Parser DirSpec
@@ -128,11 +130,11 @@ remEmacs :: String -> X ()
 remEmacs = remThing showEmacsSsh
 
 gsConfigWS :: GSConfig WorkspaceId
-gsConfigWS = def
+gsConfigWS = defaultGSConfig
 gsConfigWin :: GSConfig Window
-gsConfigWin = def
+gsConfigWin = defaultGSConfig
 gsConfigLay :: GSConfig [Char]
-gsConfigLay = def
+gsConfigLay = defaultGSConfig
 
 layouts :: [String]
 layouts = ["Tall", "Full", "Grid", "3 by 2", "Three Column"]
@@ -181,10 +183,10 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
          , ((modm, xK_q), spawn $ "ghc -e ':m +XMonad Control.Monad System.Exit'"
                           ++ " -e 'flip unless exitFailure =<< recompile False'"
                           ++ " && xmonad --restart")
-         , ((modm, xK_s), spawn "i3lock -e -t -i bsod.png")
+         , ((modm, xK_s), spawn "i3lock -t -i bsod.png")
          , ((0, xK_n), goToSelected gsConfigWin)
          , ((modm, xK_n), myGridselectWindows gsConfigWin)
-         , ((modm .|. shiftMask, xK_s), spawn $ "i3lock -e -t -i bsod.png"
+         , ((modm .|. shiftMask, xK_s), spawn $ "i3lock -t -i bsod.png"
                                         ++ " && sudo systemctl suspend")
            -- group map
          , ((modm, xK_g), myGridselectWorkspace gsConfigWS W.greedyView)
@@ -192,9 +194,9 @@ mykeys (XConfig {XMonad.modMask = modm}) = M.fromList
                                         (\ws -> W.greedyView ws . W.shift ws))
          , ((0, xK_g), submap . M.fromList $
            [ ((0, xK_d), removeWorkspace)
-           , ((0, xK_c), addWorkspacePrompt def)
-           , ((0, xK_r), renameWorkspace def)
-           , ((0, xK_e), setCurrentProject def) 
+           , ((0, xK_c), addWorkspacePrompt defaultXPConfig)
+           , ((0, xK_r), renameWorkspace defaultXPConfig)
+           , ((0, xK_e), setCurrentProject defaultXPConfig) 
            , ((0, xK_n), myGridselectWorkspace gsConfigWS W.greedyView)
            , ((shiftMask, xK_n), myGridselectWorkspace gsConfigWS
                                  (\ws -> W.greedyView ws . W.shift ws))
@@ -249,15 +251,15 @@ xmobarConfig = xmobarPP { ppSep = " | "
 
 main :: IO()
 main = (=<<) xmonad $ statusBar "xmobar" xmobarConfig toggleBarKey
-       $ withNavigation2DConfig ( def { layoutNavigation = [("Full", centerNavigation)]
-                                      , unmappedWindowRect = [("Full", singleWindowRect)]
-                                      })
+       $ withNavigation2DConfig ( defaultNavigation2DConfig { layoutNavigation = [("Full", centerNavigation)]
+                                                            , unmappedWindowRect = [("Full", singleWindowRect)]
+                                                            })
        $ ewmh $ dynamicProjects
-       $ def { keys = mykeys
-             , terminal = "urxvtc"
-             , borderWidth = 1
-             , focusFollowsMouse = False
-             , layoutHook = myLayouts
-             , XMonad.workspaces = ["Default"]
-             , handleEventHook = handleEventHook def <+> fullscreenEventHook <+> handleTimerEvent
-             }
+       $ defaultConfig { keys = mykeys
+                       , terminal = "urxvtc"
+                       , borderWidth = 1
+                       , focusFollowsMouse = False
+                       , layoutHook = myLayouts
+                       , XMonad.workspaces = ["Browser", "Other"]
+                       , handleEventHook = handleEventHook defaultConfig <+> fullscreenEventHook <+> handleTimerEvent
+                       }
